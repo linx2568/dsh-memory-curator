@@ -9,7 +9,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { MemoryStore, normalizeCandidate, scopeForCwd, jaccard, normalizeText } from '../lib/store.js'
+import { MemoryStore, normalizeCandidate, scopeForCwd, jaccard, normalizeText, redactSecrets } from '../lib/store.js'
 
 /** A store backed by a throwaway temp file. */
 function tempStore(options = {}) {
@@ -201,4 +201,73 @@ test('stats report reads and never-read entries', () => {
   assert.equal(stats.reads, 1)
   assert.equal(stats.neverRead, 1)
   assert.equal(stats.active, 2)
+})
+
+test('redactSecrets removes credential shapes and keeps the sentence', () => {
+  const key = 'sk-abcdefghijklmnopqrstuvwxyz012345'
+  const github = 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+  const { text, redacted } = redactSecrets(`The key ${key} leaked and was rotated; the gh token is ${github}.`)
+  assert.equal(redacted, 2)
+  assert.doesNotMatch(text, /sk-abcdef/)
+  assert.doesNotMatch(text, /ghp_/)
+  assert.match(text, /leaked and was rotated/, 'the knowledge around the secret survives')
+  assert.match(text, /\[redacted\]/)
+})
+
+test('redactSecrets leaves ordinary identifiers alone', () => {
+  // A commit id, a sha256 digest and a normal sentence must not be mangled: the
+  // patterns name credential shapes, not "anything that looks random".
+  const commit = 'd4634724f86e3c005d3b70475be991df27b74735'
+  const digest = 'a12bf3ac84f2fd56844038eb1c6d3c05e4de9b4e'
+  const { text, redacted } = redactSecrets(`Commit ${commit} has tree ${digest}; the locale file is locale/en.json.`)
+  assert.equal(redacted, 0)
+  assert.match(text, new RegExp(commit))
+  assert.match(text, new RegExp(digest))
+})
+
+test('a secret pasted into a candidate is redacted at the write choke point', () => {
+  const { store } = tempStore()
+  const result = store.insert({
+    kind: 'fact',
+    subject: 'rotated key',
+    text: 'The deploy key sk-abcdefghijklmnopqrstuvwxyz012345 was rotated after the incident.',
+  }, { scope: 'ws-a' })
+  assert.equal(result.action, 'added')
+  assert.doesNotMatch(result.entry.text, /sk-abcdef/)
+  assert.equal(result.entry.redacted, 1)
+  assert.match(result.entry.text, /rotated after the incident/)
+})
+
+test('decay retires long-unread ordinary entries but never the rules', () => {
+  const day = 86_400_000
+  const now = Date.now()
+  const { store } = tempStore({ now: () => now })
+  const old = now - 200 * day
+  const staleFact = store.insert({ kind: 'fact', subject: 'stale', text: 'An ordinary fact nobody has opened in months.' }, { scope: 'ws-a' })
+  const usedFact = store.insert({ kind: 'fact', subject: 'used', text: 'An ordinary fact that was read recently.' }, { scope: 'ws-a' })
+  const prohibition = store.insert({ kind: 'prohibition', subject: 'rule', text: 'Never push directly to the main branch.' }, { scope: 'ws-a' })
+  const reference = store.insert({ kind: 'reference', subject: 'ref', text: 'The authoritative reference document lives here.' }, { scope: 'ws-a' })
+  const freshFact = store.insert({ kind: 'fact', subject: 'fresh', text: 'An ordinary fact recorded just now.' }, { scope: 'ws-a' })
+
+  for (const entry of [staleFact.entry, usedFact.entry, prohibition.entry, reference.entry]) entry.createdAt = old
+  usedFact.entry.lastRecalledAt = now - day
+
+  const result = store.decay({ staleAfterDays: 120, neverReadGraceDays: 30 })
+  assert.deepEqual(result.ids, [staleFact.entry.id])
+  assert.equal(store.get(staleFact.entry.id).status, 'decayed')
+  for (const keep of [usedFact, prohibition, reference, freshFact]) {
+    assert.equal(store.get(keep.entry.id).status, 'active', `${keep.entry.subject} must survive`)
+  }
+  assert.equal(store.stats('ws-a').decayed, 1)
+})
+
+test('a decayed entry leaves recall but is kept as history', () => {
+  const day = 86_400_000
+  const now = Date.now()
+  const { store } = tempStore({ now: () => now })
+  const added = store.insert({ kind: 'fact', subject: 's', text: 'An ordinary fact that went stale months ago.' }, { scope: 'ws-a' })
+  added.entry.createdAt = now - 400 * day
+  store.decay({ staleAfterDays: 120 })
+  assert.equal(store.active('ws-a').length, 0)
+  assert.ok(store.get(added.entry.id), 'the text is still retrievable by id')
 })

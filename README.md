@@ -59,9 +59,34 @@ few `stat` calls per turn.
 What is left is the part with no other home: environment and tooling traps, the user's own
 preferences and corrections, and facts about this machine that the repository cannot know.
 
+Credentials are the one case where a prompt is not enough. `lib/store.js` redacts
+credential-shaped strings (`sk-…`, `ghp_…` / `github_pat_…`, `AKIA…`, `xox…`, JWTs, PEM private
+keys) at the single write choke point every path goes through, so an auto-capture, a tool call
+and a panel paste are all covered. Redaction beats rejection: the sentence around a leaked key
+is usually the part worth keeping, so the entry survives with `[redacted]` where the secret was.
+The patterns name credential shapes, not "anything that looks random" — a commit id or a sha256
+digest is untouched.
+
 Because memory is machine-local, the agent is also told — in the resident recall guidance — to
 **promote** an entry that is really a project rule into `AGENTS.md` / `CLAUDE.md` and then
 `memory_forget` it, so the two cannot drift apart.
+
+## Forgetting
+
+Memory that is never read still costs prompt bytes in every injection, so the store does not
+only grow. Three things retire an entry, and none of them deletes text — a retired entry keeps
+its id, its text and its history, and simply stops being recalled:
+
+| Status | Meaning |
+|---|---|
+| `superseded` / `merged` | A newer statement on the same subject replaced it, or a duplicate folded into it. Carries a `supersededBy` pointer. |
+| `forgotten` | Someone retired it on purpose (`memory_forget`, or the panel's Forget). |
+| `decayed` | Nothing read it for `decayAfterDays` and it is past `decayGraceDays` of age. |
+
+Decay refuses to touch the two kinds whose value is not a function of readership: decisional
+entries (including `open`), because a prohibition nobody has tripped yet is still binding, and
+`reference` entries, because they are consulted rarely by nature. "Read" means `lastRecalledAt`
+when the entry has been read, else its own age. Set `decayAfterDays: 0` to turn decay off.
 
 ## Measuring recall
 
@@ -97,6 +122,19 @@ instead of only counting what was withheld.
 session in its header (`origin: 'subagent'`, `delegationDepth`), and over three
 subagent sessions each one received a full catalog while the three together made
 a single memory call. They can still search on demand.
+
+### The first cleanup, as a worked example
+
+After that measurement the store was pruned by hand against the admission tests above (a backup
+is taken first, and the pruning runs through the panel's own `/forget`, because a running DSH
+holds the store in memory and would overwrite an external edit). Of 56 active entries:
+
+| Kept (19) | Retired (34) |
+|---|---|
+| Environment and tooling traps that the repository cannot know: the sandbox's `spawn EPERM` for piped child stdio, the MSYS-ssh workaround, listener enumeration being blocked by CIM, which docs endpoints are unreachable, asar layout, peerDependency rules. | Everything a repository or a document already answers: the test count, the licence, the commit structure, the topics list, the repo hygiene files; every "published / verified / rewrote" action report; and the task state that had already been worked off. |
+
+The index went from 39 saturated lines hiding 15 entries to 19 lines hiding none, with the
+prohibitions and decisions on top — the effect the layering was built for.
 
 ## Required permission
 
