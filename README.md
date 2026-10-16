@@ -8,6 +8,28 @@ Harness `llm` service, so memory inherits the user's provider, credentials and r
 
 [中文说明](#中文说明)
 
+## Install
+
+A plain Cordis bundle: no build step, no runtime dependencies.
+
+```bash
+# 1. install it into the profile that runs your DSH
+cd "${DSH_HOME:-$HOME/.dsh}/profiles/desktop"    # your own profile directory
+pnpm add link:/path/to/dsh-memory-curator
+
+# 2. list it as a bundle in that profile's package.json, e.g.
+#    "dsh": { "profile": { "bundles": [
+#      "@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "dsh-memory-curator" ] } }
+```
+
+Restart DSH. The host half mounts capture, recall, curation and the six `memory_*`
+tools; the browser half adds the **Memory** entry to the left sidebar. The package ships
+`cordis.patch.yml` — the patch DSH applies while composing the tree — so the plugin row
+and its default configuration come from the package itself.
+
+DSH's plugin manager (Settings → Plugins) accepts the same `link:` spec and performs both
+steps for you; a page refresh is enough after that, no rebuild.
+
 ## What it does
 
 | | Behaviour | How |
