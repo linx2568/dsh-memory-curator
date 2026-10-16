@@ -17,7 +17,8 @@
     "icon.svg",
     "cordis.patch.yml",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "scripts"
   ],
   "dsh": {
     "bundle": {
@@ -33,7 +34,8 @@
   },
   "scripts": {
     "test": "node --test \"test/**/*.test.js\"",
-    "test:in-process": "node --test --test-isolation=none \"test/**/*.test.js\""
+    "test:in-process": "node --test --test-isolation=none \"test/**/*.test.js\"",
+    "audit:recall": "node scripts/recall-audit.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",

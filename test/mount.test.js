@@ -19,6 +19,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { mount } from '../lib/mount.js'
+import { scopeForCwd } from '../lib/store.js'
 
 /** A Cordis-context stand-in recording every effect and injection. */
 function fakeContext() {
@@ -172,4 +173,35 @@ test('the host half declares no hard dependency that could park boot', async () 
   // dependency proved fatal, but the host half is held to the same rule.
   const hostModule = await import('../lib/index.js')
   assert.equal(hostModule.inject, undefined, 'the host half must not declare a hard inject list')
+})
+
+test('a delegated subagent gets the tools but not the resident index', () => {
+  const { ctx, injections } = fakeContext()
+  const service = {}
+  mount(ctx, { storeFile: tempStoreFile() }, service)
+  const root = 'D:\\work'
+  service.store.insert(
+    { kind: 'fact', subject: 'sandbox shell', text: 'Git ssh must be the system binary inside the sandbox.' },
+    { scope: scopeForCwd(root) },
+  )
+
+  const captured = {}
+  const injection = injections.find((i) => i.deps.includes('systemPrompt'))
+  assert.ok(injection, 'recall must register against systemPrompt')
+  injection.callback({
+    systemPrompt: {
+      section: (spec) => { captured.section = spec },
+      context: (spec) => { captured.context = spec },
+    },
+  })
+  assert.ok(captured.context, 'the index must be registered as a runtime-context block')
+
+  const render = (header) => captured.context.text({ agent: { session: { header } } })
+  assert.match(render({ cwd: root, delegationDepth: 0 }), /sandbox shell/)
+  // Measured: three subagent sessions received a full catalog and used memory
+  // once between them. Both markers are honoured, and an unmarked session keeps
+  // its memory — the gate fails open.
+  assert.equal(render({ cwd: root, origin: 'subagent' }), '')
+  assert.equal(render({ cwd: root, delegationDepth: 1 }), '')
+  assert.match(render({ cwd: root }), /sandbox shell/)
 })

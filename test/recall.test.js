@@ -54,7 +54,53 @@ test('the catalog states how many entries it withheld', () => {
   const entries = Array.from({ length: 40 }, (_, index) => entry({ id: `id${index}`, subject: `subject ${index}` }))
   const catalog = renderCatalog(entries, { maxBytes: 900 })
   assert.match(catalog, /more not shown/)
-  assert.match(catalog, /NOT evidence of deletion/)
+  // The escape hatch has to be named: measured usage shows it is only taken when
+  // the footer says what to do.
+  assert.match(catalog, /memory_search/)
+})
+
+test('a rule is never evicted to make room for fresh facts', () => {
+  const old = 1_000_000_000_000
+  const rules = [
+    entry({ id: 'p1', kind: 'prohibition', subject: 'never push straight to main', updatedAt: old }),
+    entry({ id: 'd1', kind: 'decision', subject: 'pnpm is the package manager', updatedAt: old + 1 }),
+    entry({ id: 'o1', kind: 'open', subject: 'finish the migration', updatedAt: old + 2 }),
+  ]
+  const facts = Array.from({ length: 60 }, (_, index) => entry({
+    id: `f${index}`,
+    kind: 'fact',
+    subject: `a fresh trivia fact number ${index}`,
+    updatedAt: old + 10_000 + index,
+  }))
+  const catalog = renderCatalog([...facts, ...rules], { maxBytes: 900 })
+  // Every fact is newer, and the rules still survive: behaviour outranks recency.
+  assert.match(catalog, /never push straight to main/)
+  assert.match(catalog, /pnpm is the package manager/)
+  assert.match(catalog, /finish the migration/)
+  assert.ok(Buffer.byteLength(catalog, 'utf8') <= 900)
+})
+
+test('an entry that was just read counts as fresh inside its layer', () => {
+  const now = Date.now()
+  const oldButRead = entry({ id: 'aaa111', kind: 'fact', subject: 'the one that got used', updatedAt: now - 10 * 86_400_000, lastRecalledAt: now - 1_000 })
+  const freshButUnread = entry({ id: 'bbb222', kind: 'fact', subject: 'written a few seconds ago', updatedAt: now - 5_000 })
+  const lines = renderCatalog([freshButUnread, oldButRead], { maxBytes: 2400 })
+    .split('\n').filter((row) => row.startsWith('- ['))
+  assert.match(lines[0], /aaa111/, 'a read entry must outrank a newer unread one')
+})
+
+test('the decisional share still leaves room for ordinary facts', () => {
+  const old = 1_000_000_000_000
+  const rules = Array.from({ length: 30 }, (_, index) => entry({
+    id: `r${index}`, kind: 'prohibition', subject: `a rule that is quite long indeed number ${index}`, updatedAt: old + index,
+  }))
+  const facts = Array.from({ length: 30 }, (_, index) => entry({
+    id: `f${index}`, kind: 'fact', subject: `an ordinary fact ${index}`, updatedAt: old + 100 + index,
+  }))
+  const catalog = renderCatalog([...rules, ...facts], { maxBytes: 1200, decisionalShare: 0.6 })
+  const shown = catalog.split('\n').filter((row) => row.startsWith('- ['))
+  assert.ok(shown.some((row) => /an ordinary fact/.test(row)), 'facts must not be crowded out entirely')
+  assert.ok(Buffer.byteLength(catalog, 'utf8') <= 1200)
 })
 
 test('an empty catalog renders empty rather than a misleading header', () => {

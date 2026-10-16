@@ -174,3 +174,31 @@ test('stats report the full lifecycle', () => {
   assert.equal(stats.superseded, 1)
   assert.equal(stats.visible, 1)
 })
+
+test('markRecalled counts a read, survives a reopen, and leaves the text alone', () => {
+  const { store, file } = tempStore()
+  const added = store.insert({ kind: 'fact', subject: 'sandbox shell', text: 'Git ssh must be the system binary inside the sandbox.' }, { scope: 'ws-a' })
+  const id = added.entry.id
+  assert.equal(store.markRecalled(id), 1)
+  assert.equal(store.markRecalled([id]), 1)
+  assert.equal(store.markRecalled('ffffffffff'), 0, 'an unknown id is not a read')
+
+  const entry = store.get(id)
+  assert.equal(entry.recallCount, 2)
+  assert.ok(entry.lastRecalledAt >= entry.updatedAt, 'a read records when it happened')
+  assert.equal(entry.updatedAt, added.entry.updatedAt, 'reading is not a change to the statement')
+
+  assert.ok(store.flush())
+  assert.equal(new MemoryStore(file).get(id).recallCount, 2, 'the counter must survive a reopen')
+})
+
+test('stats report reads and never-read entries', () => {
+  const { store } = tempStore()
+  const read = store.insert({ kind: 'fact', subject: 'a', text: 'A durable statement about the first thing.' }, { scope: 'ws-a' })
+  store.insert({ kind: 'fact', subject: 'b', text: 'A durable statement about the second thing.' }, { scope: 'ws-a' })
+  store.markRecalled(read.entry.id)
+  const stats = store.stats('ws-a')
+  assert.equal(stats.reads, 1)
+  assert.equal(stats.neverRead, 1)
+  assert.equal(stats.active, 2)
+})

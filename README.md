@@ -35,7 +35,7 @@ steps for you; a page refresh is enough after that, no rebuild.
 | | Behaviour | How |
 |---|---|---|
 | **A. Auto-capture** | When a turn ends, the conversation is distilled into durable entries worth keeping across sessions: designated technical references, architecture decisions, explicit corrections, prohibitions, and unfinished work. | A fire-and-forget listener on `session/event` (`turn/end`) sends the new messages to one bounded auxiliary LLM call; the validated candidates are persisted. Memory work can never delay or fail a turn. |
-| **B. Progressive recall** | Each turn gets a bounded one-line-per-entry index. Full text is fetched only on demand. | A resident catalog is injected into the system prompt (tier 0). `memory_search` returns short digests with ids (tier 1). `memory_detail` returns the complete entry (tier 2). The standing prompt cost stays flat as the store grows. |
+| **B. Progressive recall** | Each turn gets a bounded one-line-per-entry index: the entries that change behaviour (decisions, corrections, prohibitions, open work) come first, then the most recent facts. Full text is fetched only on demand. | A resident catalog is injected into the system prompt (tier 0). `memory_search` returns short digests with ids (tier 1). `memory_detail` returns the complete entry (tier 2) and records the read, which feeds the ordering and the decay pass. The standing prompt cost stays flat as the store grows. |
 | **C. Curation** | Duplicate knowledge folds into one entry; a newer decision on the same subject retires the outdated one. | A deterministic pass runs on every insert and periodically: same-subject decisional entries conflict, the newer wins, the older is kept as history with a `supersededBy` pointer. A model-assisted pass adjudicates the similar-subject pairs the deterministic pass cannot settle, biased toward `coexist` so a true memory is never wrongly retired. |
 
 ## What memory does not record
@@ -62,6 +62,41 @@ preferences and corrections, and facts about this machine that the repository ca
 Because memory is machine-local, the agent is also told — in the resident recall guidance — to
 **promote** an entry that is really a project rule into `AGENTS.md` / `CLAUDE.md` and then
 `memory_forget` it, so the two cannot drift apart.
+
+## Measuring recall
+
+The plugin records what memory is *used*, not only what it stores: `memory_detail`
+marks the entry it opened (`recallCount`, `lastRecalledAt`), the panel shows that
+count per entry and the store-wide total in its header, and an entry that was
+just read counts as fresh when the index is ordered — being used is not punished
+by age.
+
+`npm run audit:recall` reads DSH's own session logs (the plugin records no recall
+events) and reports what actually happened: which memory tools the agent reached
+for, how many entries it opened in full, how often the index had to hide entries,
+and which entries are hidden right now. It is read-only, and it decodes a session
+log frame by frame, because DSH writes one zstd frame per record.
+
+A run over the first ~7 hours of real use:
+
+```text
+tool calls     memory_add=16  memory_detail=13  memory_forget=10  memory_stats=4
+               memory_search=0  memory_curate=0
+readership     9 of 55 active entries ever opened in full
+index          166 injections, 26% of them had to hide entries
+eviction       13 of 52 visible entries hidden — 5 decisional, 6 of them read
+```
+
+That measurement drove two decisions: the index is now layered (rules and
+decisions first, then the most recent facts) because a purely newest-first index
+let fresh task narration evict the platform knowledge that had actually been
+read, including a live prohibition; and the footer now names `memory_search`
+instead of only counting what was withheld.
+
+**Subagents get the tools but not the resident index.** DSH marks a delegated
+session in its header (`origin: 'subagent'`, `delegationDepth`), and over three
+subagent sessions each one received a full catalog while the three together made
+a single memory call. They can still search on demand.
 
 ## Required permission
 
@@ -235,6 +270,8 @@ suite in a single process instead.
 - **同源护栏**：这些路由注册在 DSH 的 web server 上，而插件前缀在该 server 的鉴权闸门**之前**分发——同一端口上 DSH 自带的 `/api/client-modules` 无凭据返回 401，本插件的路由却返回 200（已在 127.0.0.1:19387 实测）。因此处理器自己校验浏览器给出的跨站标记：`Sec-Fetch-Site` 不是 `same-origin`/`none`，或 `Origin` 的主机与本次请求的 `Host` 不一致，一律 403。会带这两个头的是浏览器；两者都没有的请求来自本地进程（脚本、curl、测试），不具浏览器的环境权限，照常放行，所以命令行调用不受影响。
 
 - **与仓库文档的边界**：不记录仓库已经拥有的东西。四条判据命中任意一条即不记：①未来会话能从仓库得到吗（架构、文件路径、构建/测试命令、依赖清单、目录结构、git 历史）；②它是项目级指令吗（约定与「永远/绝不」类规则属于 `AGENTS.md`/`CLAUDE.md`，而记忆是本机私有、团队其他人看不到）；③它是任务状态吗（进度、下一步、已作废的计划属于 `STATE.md`/待办/issue）；④它是「刚刚做完了什么」的动作报告吗（产物本身就是记录）。为了让前两条可判定而不是凭感觉，每次蒸馏都会带上仓库上下文：`AGENTS.md`/`CLAUDE.md` 的正文（有界 2000 字符）加上 `README.md`、`STATE.md`、`TODO.md`、`CONTRIBUTING.md`、`ARCHITECTURE.md`、`CHANGELOG.md`、`docs/` 的存在清单；读取按 mtime+size 缓存，仓库没变时每轮只花几次 `stat`。剩下才是记忆的正当范围：环境与工具的坑、用户自己的偏好与纠正、以及仓库不可能知道的本机事实。另外，因为记忆是本机私有的，常驻召回指引会要求代理把「本质上是项目规则」的条目**升级**进 `AGENTS.md`/`CLAUDE.md`，然后 `memory_forget` 掉，避免两处漂移。
+
+- **召回可测，且防止「劣币驱逐良币」**：注入的索引分两层——会改变行为的条目（decision/correction/prohibition/open）优先，其后才是最新的事实；同层排序中「刚被读过」的条目视同刚写入（`lastRecalledAt`），所以有用不会被年龄惩罚。`memory_detail` 每次打开条目计一次 `recallCount`，面板按条显示、表头显示总量。实测（约 7 小时真实使用）发现：纯新近度排序会让刚捕获的任务叙事把**被真正读过的平台知识**挤出索引（含一条 prohibition），而全部 15 条决策类合计只占 983 字节——这直接促成了索引分层与脚注改写。`npm run audit:recall` 读取 DSH 自己的会话日志（插件不记录召回事件）输出上述指标，只读、且必须逐帧解码 zstd（DSH 每条记录一个帧）。子代理**不注入常驻索引**，但保留工具可按需检索：实测三个子代理会话各自拿到完整索引，合计仅调用过一次记忆工具。
 
 ### 工具 schema 必须是以 `object` 为根的 JSON Schema
 

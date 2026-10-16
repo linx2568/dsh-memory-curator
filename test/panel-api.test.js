@@ -296,13 +296,26 @@ test('isSameOriginRequest judges the label, not the caller', () => {
   assert.equal(isSameOriginRequest({ headers: { origin: 'http://localhost:19387', host: 'localhost:19387' } }), true)
 })
 
+test('stats expose reads and never-read entries', async () => {
+  const { service } = fixture()
+  const added = service.store.insert({ text: 'the sandbox blocks piped child stdio', kind: 'fact' }, { scope: 'global' })
+  service.store.insert({ text: 'another durable fact that nobody has opened', kind: 'fact' }, { scope: 'global' })
+  service.store.markRecalled(added.entry.id)
+  const reply = await callApi(createPanelApi(service), 'GET', '/api/memory-curator/stats')
+  assert.equal(reply.status, 200)
+  assert.equal(reply.json.reads, 1)
+  assert.equal(reply.json.neverRead, 1)
+})
+
 test('stripEntry drops internal fields and always yields a tags array', () => {
   const view = stripEntry({ id: 'a', kind: 'fact', subject: 's', text: 't', status: 'active', scope: 'global', createdAt: 1, updatedAt: 2 })
   assert.deepEqual(view.tags, [])
   assert.equal(view.supersededBy, undefined)
+  // The read counter is the one piece of internal bookkeeping the panel shows.
+  assert.equal(view.recallCount, 0)
   // The internal bookkeeping must not leak into the panel payload.
   assert.equal(Object.hasOwn(view, 'embedding'), false)
   assert.deepEqual(Object.keys(view).sort(), [
-    'createdAt', 'id', 'kind', 'scope', 'status', 'subject', 'supersededBy', 'tags', 'text', 'updatedAt',
+    'createdAt', 'id', 'kind', 'recallCount', 'scope', 'status', 'subject', 'supersededBy', 'tags', 'text', 'updatedAt',
   ].sort())
 })
