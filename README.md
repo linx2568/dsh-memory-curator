@@ -38,6 +38,31 @@ steps for you; a page refresh is enough after that, no rebuild.
 | **B. Progressive recall** | Each turn gets a bounded one-line-per-entry index. Full text is fetched only on demand. | A resident catalog is injected into the system prompt (tier 0). `memory_search` returns short digests with ids (tier 1). `memory_detail` returns the complete entry (tier 2). The standing prompt cost stays flat as the store grows. |
 | **C. Curation** | Duplicate knowledge folds into one entry; a newer decision on the same subject retires the outdated one. | A deterministic pass runs on every insert and periodically: same-subject decisional entries conflict, the newer wins, the older is kept as history with a `supersededBy` pointer. A model-assisted pass adjudicates the similar-subject pairs the deterministic pass cannot settle, biased toward `coexist` so a true memory is never wrongly retired. |
 
+## What memory does not record
+
+The plugin deliberately does not overlap with the artifacts a project already keeps. Any one
+of these tests means *record nothing*:
+
+| Test | Where that information belongs instead |
+|---|---|
+| Would a future session get it from the repository? Architecture, file paths, build and test commands, dependency lists, directory layout, git history. | The code and git themselves. |
+| Is it a project-level instruction — a convention, an "always/never" rule? | `AGENTS.md` / `CLAUDE.md`, where every teammate and every tool sees it. Memory is machine-local and invisible to the rest of the team. |
+| Is it task state — progress, next steps, a worked-off plan? | `STATE.md`, a todo list, or the issue tracker. |
+| Is it a report that something was just done? "published the repository", "rewrote the history", "added a section". | The artifact is its own record. |
+
+To make the first two decidable rather than a matter of taste, every distillation call carries
+the repository context: the bounded text of `AGENTS.md` / `CLAUDE.md` when they exist, plus the
+names of `README.md`, `STATE.md`, `TODO.md`, `CONTRIBUTING.md`, `ARCHITECTURE.md`,
+`CHANGELOG.md` and `docs/`. Reads are cached by mtime and size, so a quiet repository costs a
+few `stat` calls per turn.
+
+What is left is the part with no other home: environment and tooling traps, the user's own
+preferences and corrections, and facts about this machine that the repository cannot know.
+
+Because memory is machine-local, the agent is also told — in the resident recall guidance — to
+**promote** an entry that is really a project rule into `AGENTS.md` / `CLAUDE.md` and then
+`memory_forget` it, so the two cannot drift apart.
+
 ## Required permission
 
 **`Read Only` (仅可查看) is sufficient for full functionality.**
@@ -83,12 +108,11 @@ All settings are optional; the bundle patch ships sensible defaults.
 | `captureEnabled` | `true` | Distil finished turns into durable entries. |
 | `recallEnabled` | `true` | Inject the resident catalog each turn. |
 | `curateEnabled` | `true` | Fold duplicates and retire superseded entries. |
-| `captureSubagents` | `true` | (Reserved) include subagent turns. |
 | `catalogMaxBytes` | `2400` | Byte budget for the injected index. |
 | `curateEveryTurns` | `5` | Run the model-assisted conflict pass every N turns. |
 | `maxConcurrentDistills` | `2` | Cap simultaneous distillation calls. |
 | `distillTimeoutMs` | `60000` | Per-call deadline for distillation/adjudication. |
-| `minTurnChars` | `80` | Turns shorter than this are not worth a model call. |
+| `minTurnChars` | `80` | Transcripts shorter than this are not worth a model call. |
 | `dupThreshold` | `0.82` | Jaccard overlap above which two entries are duplicates. |
 | `storeFile` | `$DSH_HOME/memory-curator/store.json` | Store location. |
 
@@ -209,6 +233,8 @@ suite in a single process instead.
   > **为什么用 HTTP 而不是 `ctx.remote.memoryCurator`？** 浏览器半若把 Remote 命名空间声明为硬依赖（`inject: ['remote.<ns>']`），而该命名空间始终不出现，该条目会一直 `pending`；DSH 网页外壳把 pending 的客户端条目判定为**启动失败**（`web boot: 1 entry did not activate`），导致整个应用无法启动。同源路由没有这种耦合：后端缺失时面板只显示一个可恢复的错误。此做法与已知可用的 `dsh-our-free-model` 插件一致。
 
 - **同源护栏**：这些路由注册在 DSH 的 web server 上，而插件前缀在该 server 的鉴权闸门**之前**分发——同一端口上 DSH 自带的 `/api/client-modules` 无凭据返回 401，本插件的路由却返回 200（已在 127.0.0.1:19387 实测）。因此处理器自己校验浏览器给出的跨站标记：`Sec-Fetch-Site` 不是 `same-origin`/`none`，或 `Origin` 的主机与本次请求的 `Host` 不一致，一律 403。会带这两个头的是浏览器；两者都没有的请求来自本地进程（脚本、curl、测试），不具浏览器的环境权限，照常放行，所以命令行调用不受影响。
+
+- **与仓库文档的边界**：不记录仓库已经拥有的东西。四条判据命中任意一条即不记：①未来会话能从仓库得到吗（架构、文件路径、构建/测试命令、依赖清单、目录结构、git 历史）；②它是项目级指令吗（约定与「永远/绝不」类规则属于 `AGENTS.md`/`CLAUDE.md`，而记忆是本机私有、团队其他人看不到）；③它是任务状态吗（进度、下一步、已作废的计划属于 `STATE.md`/待办/issue）；④它是「刚刚做完了什么」的动作报告吗（产物本身就是记录）。为了让前两条可判定而不是凭感觉，每次蒸馏都会带上仓库上下文：`AGENTS.md`/`CLAUDE.md` 的正文（有界 2000 字符）加上 `README.md`、`STATE.md`、`TODO.md`、`CONTRIBUTING.md`、`ARCHITECTURE.md`、`CHANGELOG.md`、`docs/` 的存在清单；读取按 mtime+size 缓存，仓库没变时每轮只花几次 `stat`。剩下才是记忆的正当范围：环境与工具的坑、用户自己的偏好与纠正、以及仓库不可能知道的本机事实。另外，因为记忆是本机私有的，常驻召回指引会要求代理把「本质上是项目规则」的条目**升级**进 `AGENTS.md`/`CLAUDE.md`，然后 `memory_forget` 掉，避免两处漂移。
 
 ### 工具 schema 必须是以 `object` 为根的 JSON Schema
 

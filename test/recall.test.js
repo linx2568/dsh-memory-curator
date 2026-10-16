@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { renderCatalog, renderDigest, renderDetail, formatAge, catalogLine } from '../lib/recall.js'
-import { parseJsonObject, validateEntries, renderTranscript, DISTILL_SYSTEM_PROMPT, CONFLICT_SYSTEM_PROMPT } from '../lib/parse.js'
+import { parseJsonObject, validateEntries, renderTranscript, DISTILL_SYSTEM_PROMPT, CONFLICT_SYSTEM_PROMPT, RECALL_GUIDANCE } from '../lib/parse.js'
 
 /** A minimal active entry. */
 function entry(overrides = {}) {
@@ -153,4 +153,30 @@ test('both prompts fence their input as data, not instructions', () => {
 
 test('the conflict prompt biases toward keeping memory', () => {
   assert.match(CONFLICT_SYSTEM_PROMPT, /Bias toward "coexist" when unsure/)
+})
+
+test('the distillation prompt keeps memory out of the project documents', () => {
+  // The plugin must not overlap with what a project already owns: the rules in
+  // AGENTS.md / CLAUDE.md, the current work in STATE.md, and everything the
+  // repository itself answers.
+  for (const rule of [
+    'AGENTS.md',
+    'CLAUDE.md',
+    'STATE.md',
+    'machine-local',
+    'Would a future session get it from the repository?',
+    'Is it task state?',
+    'Is it a report that something was just done?',
+    'record nothing',
+  ]) {
+    assert.ok(DISTILL_SYSTEM_PROMPT.includes(rule), `missing rule: ${rule}`)
+  }
+})
+
+test('the recall guidance tells the agent to promote project rules into the repository', () => {
+  // Memory is machine-local: a project-level rule that lives only here is
+  // invisible to the rest of the team, so the agent is told to move it out.
+  assert.match(RECALL_GUIDANCE, /machine-local/)
+  assert.match(RECALL_GUIDANCE, /AGENTS\.md, CLAUDE\.md/)
+  assert.match(RECALL_GUIDANCE, /memory_forget/)
 })
