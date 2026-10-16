@@ -1,0 +1,50 @@
+{
+  "name": "dsh-memory-curator",
+  "version": "1.1.1",
+  "private": true,
+  "type": "module",
+  "description": "Curated durable memory for DeepSeek Harness: automatic capture of decisions/corrections/prohibitions/open work, progressive-disclosure recall, duplicate consolidation, old-vs-new conflict resolution, and a sidebar management panel.",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "icon": "./icon.svg",
+  "files": [
+    "lib",
+    "locale",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "engines": {
+    "node": ">=20.3.0"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\"",
+    "test:in-process": "node --test --test-isolation=none \"test/**/*.test.js\""
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/schemastery": "^3.18.4"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-brand": "^0.1.5-rc.3",
+    "@deepseek-ai/dsh-llm": "^0.1.5-rc.3",
+    "@deepseek-ai/dsh-scope": "^0.1.5-rc.3",
+    "@deepseek-ai/dsh-tools": "^0.1.5-rc.3",
+    "@deepseek-ai/dsh-util-values": "^0.1.5-rc.3"
+  }
+}

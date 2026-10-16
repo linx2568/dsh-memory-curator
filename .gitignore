@@ -1,0 +1,12 @@
+# Dev-only dependencies. The plugin itself ships with zero runtime dependencies
+# and no build step, so nothing here is needed to install or run it.
+node_modules/
+
+# Scratch files left by verification runs.
+.tmp-*
+*.tmp-*
+
+# OS noise.
+Thumbs.db
+Desktop.ini
+.DS_Store

@@ -1,0 +1,17 @@
+# dsh-memory-curator bundle patch.
+#
+# One insert mounts both halves of the plugin. The browser half (when present)
+# is declared by `dsh.client` in package.json and binds to the row whose `name`
+# is the bare package name — a subpath row would not carry it.
+- insert:
+    - id: memory-curator
+      name: 'dsh-memory-curator'
+      config:
+        # Capture: distill finished turns into durable memory automatically.
+        captureEnabled: true
+        # Recall: inject a short catalog every turn; full text stays on demand.
+        recallEnabled: true
+        catalogMaxBytes: 2400
+        # Curator: fold duplicates and supersede outdated decisions.
+        curateEnabled: true
+        curateEveryTurns: 5

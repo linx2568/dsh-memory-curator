@@ -1,0 +1,9 @@
+# Keep the repository and the working tree on LF. The sources are LF, the DSH
+# runtime loads them directly, and a CRLF working copy would show every file as
+# modified on a fresh clone of a Windows checkout.
+* text=auto eol=lf
+
+# Binary assets must not be line-ending converted.
+*.png binary
+*.jpg binary
+*.ico binary

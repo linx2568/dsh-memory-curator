@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Memory Curator",
+    "description": "Curated durable memory: captures decisions, corrections, prohibitions and open work automatically; recalls them through a bounded index with full text on demand; folds duplicates and retires outdated decisions."
+  }
+}
